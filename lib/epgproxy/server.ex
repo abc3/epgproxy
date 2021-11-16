@@ -40,7 +40,7 @@ defmodule Epgproxy.Server do
 
   def handle_info({:tcp, _, data}, state) do
     IO.inspect({"Server got", data, byte_size(data)}, limit: :infinity)
-    GenServer.call(Epgproxy.Proxy, {:db, data})
+    GenServer.call(Epgproxy.DbSess, {:db, data})
     {:noreply, state}
   end
 

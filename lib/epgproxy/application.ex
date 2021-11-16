@@ -3,8 +3,6 @@ defmodule Epgproxy.Application do
 
   @impl true
   def start(_type, _args) do
-    children = [Epgproxy.Proxy]
-
     :ranch.start_listener(
       :pg_proxy,
       :ranch_tcp,
@@ -13,6 +11,7 @@ defmodule Epgproxy.Application do
       []
     )
 
+    children = [Epgproxy.DbSess]
     opts = [strategy: :one_for_one, name: Epgproxy.Supervisor]
     Supervisor.start_link(children, opts)
   end
