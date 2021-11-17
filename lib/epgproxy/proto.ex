@@ -83,6 +83,25 @@ defmodule Epgproxy.Proto do
     end
   end
 
+  def decode_payload(:parameter_status, payload) do
+    case String.split(payload, <<0>>, trim: true) do
+      [k, v] -> {k, v}
+      _ -> :undefined
+    end
+  end
+
+  def decode_payload(:backend_key_data, <<proc_id::integer-32, secret::integer-32>>) do
+    %{procid: proc_id, secret: secret}
+  end
+
+  def decode_payload(:ready_for_query, payload) do
+    case payload do
+      <<"I">> -> :idle
+      <<"T">> -> :transaction
+      <<"E">> -> :error
+    end
+  end
+
   def decode_payload(:error_response, _payload) do
     :undefined
   end
