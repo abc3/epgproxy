@@ -15,13 +15,23 @@ defmodule Epgproxy.DbSess do
     auth = %{
       host: {127, 0, 0, 1},
       port: 5432,
-      user: "user",
+      user: "postgres",
       database: "postgres",
       application_name: "epgproxy"
     }
 
-    {:ok, %{socket: nil, caller: nil, sent: false, auth: auth, payload_size: 0, buffer: <<>>},
-     {:continue, :connect}}
+    {:ok,
+     %{
+       socket: nil,
+       caller: nil,
+       sent: false,
+       auth: auth,
+       payload_size: 0,
+       buffer: <<>>,
+       db_state: nil,
+       parameter_status: %{},
+       wait: false
+     }, {:continue, :connect}}
   end
 
   @impl true
@@ -59,13 +69,43 @@ defmodule Epgproxy.DbSess do
   def handle_info({:tcp_closed, _port}, %{socket: socket} = state) do
     Logger.debug("Port is closed")
     :ok = :gen_tcp.close(socket)
-    {:stop, :normal, state}
+    {:stop, :normal, %{state | db_state: nil}}
   end
 
-  def handle_info({:tcp, _port, data}, %{buffer: buf} = state) do
+  def handle_info({:tcp, _port, data}, %{buffer: buf, db_state: nil, socket: socket} = state) do
     Logger.debug("Got data #{inspect(byte_size(data))} bytes")
-    dec_pkt = handle_response(buf <> data, [])
-    Logger.debug("Decoded #{inspect(dec_pkt)}")
+    dec_pkt = Proto.decode(buf <> data)
+    IO.inspect({:decoded, dec_pkt})
+
+    {ps, db_state} =
+      Enum.reduce(dec_pkt, {%{}, nil}, fn
+        %{tag: :parameter_status, payload: {k, v}}, {ps, db_state} ->
+          {Map.put(ps, k, v), db_state}
+
+        %{tag: :ready_for_query, payload: db_state}, {ps, _} ->
+          {ps, db_state}
+
+        _e, acc ->
+          acc
+      end)
+
+    :gen_tcp.send(socket, Proto.test_query())
+    active_once(socket)
+
+    {:noreply, %{state | buffer: <<>>, db_state: db_state, parameter_status: ps, wait: true}}
+  end
+
+  def handle_info({:tcp, _port, data}, %{wait: true, socket: socket} = state) do
+    IO.inspect({:data, data})
+    dec_pkt = Proto.decode(data)
+    IO.inspect({:decoded, dec_pkt})
+
+    active_once(socket)
+    {:noreply, %{state | buffer: <<>>}}
+  end
+
+  def handle_info({:tcp, _port, data}, %{db_state: :idle} = state) do
+    IO.inspect({:data, data})
     {:noreply, %{state | buffer: <<>>}}
   end
 
@@ -78,14 +118,5 @@ defmodule Epgproxy.DbSess do
 
   def active_once(socket) do
     :inet.setopts(socket, [{:active, :once}])
-  end
-
-  def handle_response(data, acc) when byte_size(data) >= 5 do
-    {:ok, pkt, rest} = Proto.decode(data)
-    handle_response(rest, [pkt | acc])
-  end
-
-  def handle_response(_, acc) do
-    acc
   end
 end
