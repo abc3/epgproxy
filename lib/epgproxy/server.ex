@@ -1,12 +1,22 @@
 defmodule Epgproxy.Server do
-  use GenServer
   require Logger
+  @behaviour :gen_statem
   @behaviour :ranch_protocol
+
+  alias Epgproxy.Proto
 
   @impl true
   def start_link(ref, transport, opts) do
     pid = :proc_lib.spawn_link(__MODULE__, :init, [ref, transport, opts])
     {:ok, pid}
+  end
+
+  @impl true
+  def callback_mode() do
+    [
+      # :state_enter,
+      :handle_event_function
+    ]
   end
 
   @impl true
@@ -17,47 +27,82 @@ defmodule Epgproxy.Server do
   def init(ref, trans, _opts) do
     {:ok, socket} = :ranch.handshake(ref)
     :ok = trans.setopts(socket, [{:active, true}])
-    Logger.info("Epgproxy.Server is: #{inspect(self())}")
+    Logger.info("Epgproxy.ClientSess is: #{inspect(self())}")
 
-    :gen_server.enter_loop(__MODULE__, [], %{
-      socket: socket,
-      trans: trans,
-      connected: false,
-      pgo: nil
-    })
+    :gen_statem.enter_loop(
+      __MODULE__,
+      [],
+      :wait_startup_packet,
+      %{
+        socket: socket,
+        trans: trans,
+        connected: false,
+        pgo: nil
+      }
+    )
   end
 
   @impl true
-  def handle_info({:tcp, _pid, _data}, %{connected: false, trans: trans, socket: socket} = state) do
+  def handle_event(
+        :info,
+        {:tcp, _port, bin},
+        :wait_startup_packet,
+        %{
+          socket: socket,
+          trans: trans
+        } = data
+      ) do
+    hello = Proto.decode_startup_packet(bin)
+    IO.inspect({:hello, hello})
     trans.send(socket, authentication_ok())
-    {:noreply, %{state | connected: true}}
+    {:next_state, :idle, data}
   end
 
-  # def handle_info({:tcp, _, <<"Q", _len::integer-32, rest::binary>>}, state) do
-  #   IO.inspect({"got", String.slice(rest, 0..-2), byte_size(rest)}, limit: :infinity)
-  #   {:noreply, state}
-  # end
-
-  def handle_info({:tcp, _, data}, state) do
-    IO.inspect({"Server got", data, byte_size(data)}, limit: :infinity)
-    GenServer.call(Epgproxy.DbSess, {:db, data})
-    {:noreply, state}
+  def handle_event(:info, {:tcp, _port, bin}, :idle, _) do
+    dec = Epgproxy.Proto.Client.decode(bin)
+    IO.inspect({:indle, dec})
+    :ok = Epgproxy.DbSess.call(bin)
+    :keep_state_and_data
   end
 
-  def handle_info({:tcp_closed, _}, _state) do
+  def handle_event(
+        {:call, from},
+        {:reply, bin},
+        _,
+        %{
+          socket: socket,
+          trans: trans
+        }
+      ) do
+    Logger.debug("Reply")
+    trans.send(socket, bin)
+    {:keep_state_and_data, [{:reply, from, :ok}]}
+  end
+
+  def handle_event(:info, {:tcp_closed, _port}, _, _) do
+    IO.inspect(:tcp_closed)
     {:stop, :normal}
   end
 
-  def handle_info(msg, state) do
-    IO.inspect({"got", msg, self()})
-    {:noreply, state}
+  def handle_event(event_type, event_content, state, data) do
+    IO.inspect([
+      {"event_type", event_type},
+      {"event_content", event_content},
+      {"state", state},
+      {"data", data}
+    ])
+
+    :keep_state_and_data
   end
 
-  @impl true
-  def handle_call({:reponse, msg}, _, %{trans: trans, socket: socket} = state) do
-    Logger.info("{:reponse, msg}")
-    trans.send(socket, msg)
-    {:reply, :ok, state}
+  def test_conn() do
+    :pgo.start_pool(:default, %{
+      :pool_size => 1,
+      :port => 5555,
+      :host => "127.0.0.1",
+      :database => "postgres",
+      :user => "postgres"
+    })
   end
 
   def authentication_ok() do
