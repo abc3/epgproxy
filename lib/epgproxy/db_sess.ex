@@ -6,6 +6,10 @@ defmodule Epgproxy.DbSess do
 
   @pkt_header_size 5
 
+  def call(bin) do
+    GenServer.call(__MODULE__, {:call, bin})
+  end
+
   def start_link(opts) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
@@ -60,10 +64,21 @@ defmodule Epgproxy.DbSess do
   end
 
   @impl true
-  def handle_info({:tcp, _port, data}, %{sent: true, caller: caller} = state) do
+  def handle_call({:call, bin}, {from, _}, %{socket: socket} = state) do
+    Logger.debug("db call, caller: #{inspect(from)}")
+    send_active_once(socket, bin)
+    {:reply, :ok, %{state | caller: from, sent: true}}
+  end
+
+  @impl true
+  def handle_info({:tcp, _port, bin}, %{sent: true, caller: caller, socket: socket} = state) do
     Logger.debug("Resend data")
-    GenServer.call(caller, {:reponse, data})
-    {:noreply, %{state | sent: false}}
+    Logger.debug("Got data #{inspect(byte_size(bin))} bytes")
+    dec_pkt = Proto.decode(bin)
+    IO.inspect({:dec_pkt, dec_pkt})
+    :gen_statem.call(caller, {:reply, bin})
+    active_once(socket)
+    {:noreply, %{state | sent: true}}
   end
 
   def handle_info({:tcp_closed, _port}, %{socket: socket} = state) do
@@ -72,7 +87,7 @@ defmodule Epgproxy.DbSess do
     {:stop, :normal, %{state | db_state: nil}}
   end
 
-  def handle_info({:tcp, _port, data}, %{buffer: buf, db_state: nil, socket: socket} = state) do
+  def handle_info({:tcp, _port, data}, %{buffer: buf, db_state: nil} = state) do
     Logger.debug("Got data #{inspect(byte_size(data))} bytes")
     dec_pkt = Proto.decode(buf <> data)
     IO.inspect({:decoded, dec_pkt})
@@ -89,14 +104,14 @@ defmodule Epgproxy.DbSess do
           acc
       end)
 
-    :gen_tcp.send(socket, Proto.test_query())
-    active_once(socket)
+    # :gen_tcp.send(socket, Proto.test_extended_query())
+    # active_once(socket)
 
     {:noreply, %{state | buffer: <<>>, db_state: db_state, parameter_status: ps, wait: true}}
   end
 
   def handle_info({:tcp, _port, data}, %{wait: true, socket: socket} = state) do
-    IO.inspect({:data, data})
+    Logger.debug("Got data #{inspect(byte_size(data))} bytes")
     dec_pkt = Proto.decode(data)
     IO.inspect({:decoded, dec_pkt})
 
@@ -104,16 +119,20 @@ defmodule Epgproxy.DbSess do
     {:noreply, %{state | buffer: <<>>}}
   end
 
-  def handle_info({:tcp, _port, data}, %{db_state: :idle} = state) do
-    IO.inspect({:data, data})
+  def handle_info({:tcp, _port, data}, %{socket: socket, db_state: :idle} = state) do
+    IO.inspect({:data1, data})
+    active_once(socket)
     {:noreply, %{state | buffer: <<>>}}
   end
 
-  @impl true
-  def handle_call({:db, msg}, {caller, _}, %{socket: socket} = state) do
-    Logger.debug("db call, caller: #{inspect(caller)}")
+  def handle_info(msg, state) do
+    IO.inspect({:msg, msg})
+    {:noreply, state}
+  end
+
+  def send_active_once(socket, msg) do
     :gen_tcp.send(socket, msg)
-    {:reply, :ok, %{state | caller: caller, sent: true}}
+    :inet.setopts(socket, [{:active, :once}])
   end
 
   def active_once(socket) do
