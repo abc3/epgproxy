@@ -21,6 +21,9 @@ defmodule Epgproxy.Proto do
   end
 
   def decode_pkt(<<char::integer-8, pkt_len::integer-32, rest::binary>>, decode_payload \\ true) do
+    # Logger.debug("char #{inspect(char)}")
+    # Logger.debug("pkt_len #{inspect(pkt_len)}")
+    # Logger.debug("rest #{inspect(rest, limit: :infinity)}")
     tag = tag(char)
     payload_len = pkt_len - 4
 
@@ -207,9 +210,18 @@ defmodule Epgproxy.Proto do
     [<<?P, payload_len::integer-32>>, payload]
   end
 
-  def test_query() do
+  def decode_startup_packet(<<len::integer-32, _protocol::binary-4, rest::binary>>) do
+    # <<major::integer-16, minor::integer-16>> = protocol
+
+    %Pkt{
+      len: len,
+      payload: String.split(rest, <<0>>, trim: true) |> Enum.chunk_every(2)
+    }
+  end
+
+  def test_extended_query() do
     [
-      encode("select 1;"),
+      encode("select * from todos where id = 40;"),
       [<<68, 0, 0, 0, 6, 83>>, [], <<0>>],
       flush()
     ]
