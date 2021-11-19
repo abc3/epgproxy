@@ -1,4 +1,4 @@
-defmodule Epgproxy.Proto do
+defmodule Epgproxy.Proto.Server do
   require Logger
 
   @pkt_header_size 5
@@ -208,15 +208,6 @@ defmodule Epgproxy.Proto do
     payload = [[], <<0>>, query, <<0>>, <<0, 0>>, []]
     payload_len = IO.iodata_length(payload) + 4
     [<<?P, payload_len::integer-32>>, payload]
-  end
-
-  def decode_startup_packet(<<len::integer-32, _protocol::binary-4, rest::binary>>) do
-    # <<major::integer-16, minor::integer-16>> = protocol
-
-    %Pkt{
-      len: len,
-      payload: String.split(rest, <<0>>, trim: true) |> Enum.chunk_every(2)
-    }
   end
 
   def test_extended_query() do
