@@ -49,4 +49,14 @@ defmodule Epgproxy.Proto.Client do
       _ -> :undefined
     end
   end
+
+  def decode_startup_packet(<<len::integer-32, _protocol::binary-4, rest::binary>>) do
+    # <<major::integer-16, minor::integer-16>> = protocol
+
+    %Pkt{
+      len: len,
+      payload: String.split(rest, <<0>>, trim: true) |> Enum.chunk_every(2),
+      tag: :statup
+    }
+  end
 end
