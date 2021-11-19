@@ -21,7 +21,7 @@ defmodule Epgproxy.MixProject do
   defp deps do
     [
       {:ranch, "~> 2.1.0"},
-      {:pgo, "~> 0.11"}
+      {:poolboy, "~> 1.5.2"}
     ]
   end
 end
