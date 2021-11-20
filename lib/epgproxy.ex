@@ -6,7 +6,7 @@ defmodule Epgproxy do
       :db_sess,
       fn pid ->
         try do
-          Epgproxy.DbSess2.call(pid, bin)
+          Epgproxy.DbSess.call(pid, bin)
         catch
           e, r ->
             Logger.debug("poolboy transaction caught error: #{inspect(e)}, #{inspect(r)}")

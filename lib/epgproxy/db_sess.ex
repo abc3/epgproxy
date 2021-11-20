@@ -1,4 +1,4 @@
-defmodule Epgproxy.DbSess2 do
+defmodule Epgproxy.DbSess do
   require Logger
   @behaviour :gen_statem
   alias Epgproxy.Proto.Server
@@ -94,9 +94,15 @@ defmodule Epgproxy.DbSess2 do
     Logger.debug("--> bin #{inspect(byte_size(bin))} bytes")
 
     Epgproxy.ClientSess.client_call(caller, bin)
-    {:ok, rest} = handle_packets(buf <> bin)
-    # IO.inspect({:rest, byte_size(bin)})
-    {:keep_state, %{data | buffer: rest}}
+
+    case handle_packets(buf <> bin) do
+      {:ok, :ready_for_query, _} ->
+        :poolboy.checkin(:db_sess, self())
+        {:keep_state, %{data | buffer: <<>>}}
+
+      {:ok, _, rest} ->
+        {:keep_state, %{data | buffer: rest}}
+    end
   end
 
   def handle_event(:info, {:tcp_closed, _port}, _, _) do
@@ -127,17 +133,19 @@ defmodule Epgproxy.DbSess2 do
     IO.inspect({Server.tag(char), payload_len, byte_size(rest)})
 
     case rest do
+      <<_payload::binary-size(payload_len)>> ->
+        {:ok, Server.tag(char), ""}
+
       <<_payload::binary-size(payload_len), rest1::binary>> ->
         handle_packets(rest1)
 
       _ ->
-        {:ok, bin}
+        {:ok, Server.tag(char), bin}
     end
   end
 
   def handle_packets(bin) do
-    IO.inspect({:exit, bin})
-    {:ok, bin}
+    {:ok, :small_chunk, bin}
   end
 
   def send_active_once(socket, msg) do

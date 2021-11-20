@@ -26,7 +26,7 @@ defmodule Epgproxy.Application do
   defp poolboy_config do
     [
       name: {:local, :db_sess},
-      worker_module: Epgproxy.DbSess2,
+      worker_module: Epgproxy.DbSess,
       size: 1,
       max_overflow: 0
     ]

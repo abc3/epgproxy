@@ -37,6 +37,7 @@ defmodule Epgproxy.ClientSess do
         socket: socket,
         trans: trans,
         connected: false,
+        db_sess: nil,
         pgo: nil
       }
     )
@@ -70,13 +71,22 @@ defmodule Epgproxy.ClientSess do
 
   ##############################################################################
 
-  def handle_event(:info, {:tcp, _port, bin}, :idle, data) do
-    Logger.debug("<-- bin #{inspect(byte_size(bin))} bytes")
+  def handle_event(:info, {:tcp, _port, <<?Q, _::binary>> = bin}, :idle, data) do
+    db_sess = :poolboy.checkout(:db_sess)
+    Logger.debug("<-- bin #{inspect(byte_size(bin))} bytes / db_sess #{inspect(db_sess)}")
+
     IO.inspect({:from_client, Epgproxy.Proto.Client.decode(bin)})
-    # Epgproxy.DbSess2.server_call(bin)
-    Epgproxy.db_call(bin)
+    Epgproxy.DbSess.call(db_sess, bin)
     :keep_state_and_data
   end
+
+  # def handle_event(:info, {:tcp, _port, bin}, :idle, data) do
+  #   Logger.debug("<-- bin #{inspect(byte_size(bin))} bytes")
+  #   IO.inspect({:from_client, Epgproxy.Proto.Client.decode(bin)})
+  #   # Epgproxy.DbSess2.server_call(bin)
+  #   Epgproxy.db_call(bin)
+  #   :keep_state_and_data
+  # end
 
   def handle_event({:call, from}, {:client_call, bin}, _, %{socket: socket, trans: trans}) do
     Logger.debug("--> --> bin #{inspect(byte_size(bin))} bytes")
