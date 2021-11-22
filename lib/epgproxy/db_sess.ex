@@ -44,6 +44,8 @@ defmodule Epgproxy.DbSess do
       wait: false
     }
 
+    Logger.info(inspect(self()))
+
     {:ok, :db_connect, data, [{:next_event, :internal, :ok}]}
   end
 
@@ -55,18 +57,18 @@ defmodule Epgproxy.DbSess do
 
     case :gen_tcp.connect(auth.host, auth.port, socket_opts) do
       {:ok, socket} ->
-        # msg =
-        #   :pgo_protocol.encode_startup_message([
-        #     {"user", auth.user},
-        #     {"database", auth.database},
-        #     {"user", auth.user},
-        #     {"application_name", auth.application_name}
-        #   ])
+        msg =
+          :pgo_protocol.encode_startup_message([
+            {"user", auth.user},
+            {"database", auth.database},
+            # {"password", auth.user},
+            {"application_name", auth.application_name}
+          ])
 
-        # :ok = :gen_tcp.send(socket, msg)
+        :ok = :gen_tcp.send(socket, msg)
         # :ok = active_once(socket)
         # {:next_state, :wait_db_startup_response, %{data | socket: socket}}
-        {:next_state, :idle, %{data | socket: socket}}
+        {:next_state, :authentication, %{data | socket: socket}}
 
       other ->
         Logger.error("Connection faild #{inspect(other)}")
@@ -79,6 +81,26 @@ defmodule Epgproxy.DbSess do
     Logger.debug("<-- <-- bin #{inspect(byte_size(bin))} bytes")
     :gen_tcp.send(socket, bin)
     {:keep_state, %{data | caller: pid}, [{:reply, from, :ok}]}
+  end
+
+  def handle_event(:info, {:tcp, _port, bin}, :authentication, data) do
+    dec_pkt = Server.decode(bin)
+
+    {ps, db_state} =
+      Enum.reduce(dec_pkt, {%{}, nil}, fn
+        %{tag: :parameter_status, payload: {k, v}}, {ps, db_state} ->
+          {Map.put(ps, k, v), db_state}
+
+        %{tag: :ready_for_query, payload: db_state}, {ps, _} ->
+          {ps, db_state}
+
+        _e, acc ->
+          acc
+      end)
+
+    Logger.debug("DB parameter_status: #{inspect(ps)}")
+    Logger.debug("DB ready_for_query: #{inspect(db_state)}")
+    {:next_state, :idle, %{data | parameter_status: ps}}
   end
 
   # receive reply from DB and send to the client

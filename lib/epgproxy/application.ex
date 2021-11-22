@@ -6,6 +6,7 @@ defmodule Epgproxy.Application do
     :ranch.start_listener(
       :pg_proxy,
       :ranch_tcp,
+      # :ranch_ssl,
       %{socket_opts: [{:port, 5555}]},
       Epgproxy.ClientSess,
       []
@@ -13,8 +14,8 @@ defmodule Epgproxy.Application do
 
     children = [
       # %{
-      #   id: Epgproxy.DbSess2,
-      #   start: {Epgproxy.DbSess2, :start_link, []}
+      #   id: Epgproxy.DbSess,
+      #   start: {Epgproxy.DbSess, :start_link, [nil]}
       # }
       :poolboy.child_spec(:worker, poolboy_config())
     ]
