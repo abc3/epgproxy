@@ -43,16 +43,25 @@ defmodule Epgproxy.ClientSess do
     )
   end
 
-  ##### DB CONNECT #############################################################
-  @impl true
-  def handle_event(:info, {:tcp, _port, bin}, :wait_startup_packet, data) do
+  def handle_event(
+        :info,
+        {:tcp, _port, bin},
+        :wait_startup_packet,
+        %{trans: trans, socket: socket} = data
+      ) do
     Logger.debug("Startup <-- bin #{inspect(byte_size(bin))}")
-    hello = Client.decode_startup_packet(bin)
-    IO.inspect({:hello, hello})
-    # Epgproxy.DbSess2.server_call(bin)
-    Epgproxy.db_call(bin)
-    # {:next_state, :idle, data}
-    :keep_state_and_data
+    # IO.inspect(bin, limit: :infinity)
+
+    # SSL negotiation, S/N/Error
+    if byte_size(bin) == 8 do
+      trans.send(socket, "N")
+      :keep_state_and_data
+    else
+      hello = Client.decode_startup_packet(bin)
+      Logger.debug("Client startup message: #{inspect(hello)}")
+      trans.send(socket, authentication_ok())
+      {:next_state, :idle, data}
+    end
   end
 
   def handle_event(
