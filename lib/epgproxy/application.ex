@@ -28,7 +28,7 @@ defmodule Epgproxy.Application do
     [
       name: {:local, :db_sess},
       worker_module: Epgproxy.DbSess,
-      size: 1,
+      size: Application.get_env(:epgproxy, :pool_size),
       max_overflow: 0
     ]
   end
