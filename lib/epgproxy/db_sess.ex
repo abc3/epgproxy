@@ -44,19 +44,17 @@ defmodule Epgproxy.DbSess do
       wait: false
     }
 
-    Logger.info(inspect(self()))
-
     {:ok, :db_connect, data, [{:next_event, :internal, :ok}]}
   end
 
   @impl true
   def handle_event(:internal, _, :db_connect, %{auth: auth} = data) do
-    # socket_opts = [:binary, {:packet, :raw}, {:active, false}]
     socket_opts = [:binary, {:packet, :raw}, {:active, true}]
-    Logger.debug("DbSess auth #{inspect(auth)}")
 
     case :gen_tcp.connect(auth.host, auth.port, socket_opts) do
       {:ok, socket} ->
+        Logger.debug("auth #{inspect(auth, pretty: true)}")
+
         msg =
           :pgo_protocol.encode_startup_message([
             {"user", auth.user},
@@ -66,8 +64,6 @@ defmodule Epgproxy.DbSess do
           ])
 
         :ok = :gen_tcp.send(socket, msg)
-        # :ok = active_once(socket)
-        # {:next_state, :wait_db_startup_response, %{data | socket: socket}}
         {:next_state, :authentication, %{data | socket: socket}}
 
       other ->
@@ -98,7 +94,7 @@ defmodule Epgproxy.DbSess do
           acc
       end)
 
-    Logger.debug("DB parameter_status: #{inspect(ps)}")
+    Logger.debug("parameter_status: #{inspect(ps, pretty: true)}")
     Logger.debug("DB ready_for_query: #{inspect(db_state)}")
     {:next_state, :idle, %{data | parameter_status: ps}}
   end
@@ -133,13 +129,14 @@ defmodule Epgproxy.DbSess do
   end
 
   def handle_event(event_type, event_content, state, data) do
-    IO.inspect([
+    msg = [
       {"event_type", event_type},
       {"event_content", event_content},
       {"state", state},
       {"data", data}
-    ])
+    ]
 
+    Logger.error("Undefined msg: #{inspect(msg, pretty: true)}")
     :keep_state_and_data
   end
 
@@ -151,18 +148,21 @@ defmodule Epgproxy.DbSess do
 
   def handle_packets(<<char::integer-8, pkt_len::integer-32, rest::binary>> = bin) do
     payload_len = pkt_len - 4
-
-    IO.inspect({Server.tag(char), payload_len, byte_size(rest)})
+    tag = Server.tag(char)
 
     case rest do
-      <<_payload::binary-size(payload_len)>> ->
-        {:ok, Server.tag(char), ""}
+      <<payload::binary-size(payload_len)>> ->
+        Logger.debug(inspect(Server.packet(tag, pkt_len, payload), pretty: true))
 
-      <<_payload::binary-size(payload_len), rest1::binary>> ->
+        {:ok, tag, ""}
+
+      <<payload::binary-size(payload_len), rest1::binary>> ->
+        Logger.debug(inspect(Server.packet(tag, pkt_len, payload), pretty: true))
+
         handle_packets(rest1)
 
       _ ->
-        {:ok, Server.tag(char), bin}
+        {:ok, tag, bin}
     end
   end
 

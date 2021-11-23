@@ -43,6 +43,7 @@ defmodule Epgproxy.ClientSess do
     )
   end
 
+  @impl true
   def handle_event(
         :info,
         {:tcp, _port, bin},
@@ -50,7 +51,6 @@ defmodule Epgproxy.ClientSess do
         %{trans: trans, socket: socket} = data
       ) do
     Logger.debug("Startup <-- bin #{inspect(byte_size(bin))}")
-    # IO.inspect(bin, limit: :infinity)
 
     # SSL negotiation, S/N/Error
     if byte_size(bin) == 8 do
@@ -78,24 +78,41 @@ defmodule Epgproxy.ClientSess do
     {:next_state, :idle, data, [{:reply, from, :ok}]}
   end
 
-  ##############################################################################
+  # sync message
+  def handle_event(:info, {:tcp, _port, <<83, 0, 0, 0, 4>>}, :idle, %{
+        trans: trans,
+        socket: socket
+      }) do
+    # ready_for_query and idle
+    trans.send(socket, <<?Z, 0, 0, 0, 5, ?I>>)
+    :keep_state_and_data
+  end
 
-  def handle_event(:info, {:tcp, _port, <<?Q, _::binary>> = bin}, :idle, data) do
+  # exclude termination message
+  def handle_event(:info, {:tcp, _port, <<?X, _::binary>> = bin}, :idle, _) do
+    dec = Epgproxy.Proto.Client.decode(bin)
+    Logger.debug(inspect(dec, pretty: true))
+    :keep_state_and_data
+  end
+
+  # simple protocol
+  def handle_event(:info, {:tcp, _port, <<?Q, _::binary>> = bin}, :idle, _) do
     db_sess = :poolboy.checkout(:db_sess)
-    Logger.debug("<-- bin #{inspect(byte_size(bin))} bytes / db_sess #{inspect(db_sess)}")
 
-    IO.inspect({:from_client, Epgproxy.Proto.Client.decode(bin)})
+    dec = Epgproxy.Proto.Client.decode(bin)
+    Logger.debug(inspect(dec, pretty: true))
     Epgproxy.DbSess.call(db_sess, bin)
     :keep_state_and_data
   end
 
-  # def handle_event(:info, {:tcp, _port, bin}, :idle, data) do
-  #   Logger.debug("<-- bin #{inspect(byte_size(bin))} bytes")
-  #   IO.inspect({:from_client, Epgproxy.Proto.Client.decode(bin)})
-  #   # Epgproxy.DbSess2.server_call(bin)
-  #   Epgproxy.db_call(bin)
-  #   :keep_state_and_data
-  # end
+  def handle_event(:info, {:tcp, _port, bin}, :idle, _) do
+    db_sess = :poolboy.checkout(:db_sess)
+
+    dec = Epgproxy.Proto.Client.decode(bin)
+    Logger.debug(inspect(dec, pretty: true))
+    Epgproxy.DbSess.call(db_sess, bin)
+    :keep_state_and_data
+  end
 
   def handle_event({:call, from}, {:client_call, bin}, _, %{socket: socket, trans: trans}) do
     Logger.debug("--> --> bin #{inspect(byte_size(bin))} bytes")
@@ -108,73 +125,30 @@ defmodule Epgproxy.ClientSess do
     {:stop, :normal}
   end
 
-  # %%%%%%%%%%%%%%5
-
-  # @impl true
-  # def handle_event(
-  #       :info,
-  #       {:tcp, _port, bin},
-  #       :wait_startup_packet,
-  #       %{
-  #         socket: socket,
-  #         trans: trans
-  #       } = data
-  #     ) do
-  #   hello = Proto.decode_startup_packet(bin)
-  #   IO.inspect({:hello, hello})
-  #   trans.send(socket, authentication_ok())
-  #   {:next_state, :connected, data}
-  # end
-
-  # def handle_event(:info, {:tcp, _port, bin}, :connected, _) do
-  #   dec = Epgproxy.Proto.Client.decode(bin)
-  #   IO.inspect({:indle, dec})
-  #   :ok = Epgproxy.DbSess.call(bin)
-  #   :keep_state_and_data
-  # end
-
-  # def handle_event(
-  #       {:call, from},
-  #       {:reply, bin},
-  #       _,
-  #       %{
-  #         socket: socket,
-  #         trans: trans
-  #       }
-  #     ) do
-  #   # Logger.debug("Reply")
-  #   Logger.debug("Client proxy bin #{inspect(byte_size(bin))} bytes")
-  #   trans.send(socket, bin)
-  #   {:keep_state_and_data, [{:reply, from, :ok}]}
-  # end
-
-  # def handle_event(:info, {:tcp_closed, _port}, _, _) do
-  #   IO.inspect(:tcp_closed)
-  #   {:stop, :normal}
-  # end
-
   def handle_event(event_type, event_content, state, data) do
-    IO.inspect([
+    msg = [
       {"event_type", event_type},
       {"event_content", event_content},
       {"state", state},
       {"data", data}
-    ])
+    ]
+
+    Logger.error("Undefined msg: #{inspect(msg, pretty: true)}")
 
     :keep_state_and_data
   end
 
   def test_conn() do
-    {:ok, pid} =
-      Postgrex.start_link(
-        hostname: "localhost",
-        username: "postgres",
-        # password: "postgres",
-        database: "postgres",
-        port: 5555
-      )
+    # {:ok, pid} =
+    #   Postgrex.start_link(
+    #     hostname: "localhost",
+    #     username: "postgres",
+    #     # password: "postgres",
+    #     database: "postgres",
+    #     port: 5555
+    #   )
 
-    pid
+    # pid
     # {:ok, #PID<0.69.0>}
     #     :epgsql.connect(%{
     #       # :port => 5555,
@@ -185,13 +159,13 @@ defmodule Epgproxy.ClientSess do
     #     })
 
     # pid
-    # :pgo.start_pool(:default, %{
-    #   :pool_size => 1,
-    #   :port => 5555,
-    #   :host => "127.0.0.1",
-    #   :database => "postgres",
-    #   :user => "postgres"
-    # })
+    :pgo.start_pool(:default, %{
+      :pool_size => 1,
+      :port => 5555,
+      :host => "127.0.0.1",
+      :database => "postgres",
+      :user => "postgres"
+    })
   end
 
   def authentication_ok() do

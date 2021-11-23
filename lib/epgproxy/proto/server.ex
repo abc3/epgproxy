@@ -20,10 +20,11 @@ defmodule Epgproxy.Proto.Server do
     Enum.reverse(acc)
   end
 
+  def packet(tag, pkt_len, payload) do
+    %Pkt{tag: tag, len: pkt_len + 1, payload: payload}
+  end
+
   def decode_pkt(<<char::integer-8, pkt_len::integer-32, rest::binary>>, decode_payload \\ true) do
-    # Logger.debug("char #{inspect(char)}")
-    # Logger.debug("pkt_len #{inspect(pkt_len)}")
-    # Logger.debug("rest #{inspect(rest, limit: :infinity)}")
     tag = tag(char)
     payload_len = pkt_len - 4
 
