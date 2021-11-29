@@ -2,7 +2,12 @@ use Mix.Config
 require Logger
 
 config :epgproxy,
-  pool_size: 10
+  db_host: "127.0.0.1",
+  db_port: 5432,
+  db_name: "postgres",
+  db_user: "postgres",
+  db_password: "postgres",
+  pool_size: 1
 
 # Configures Elixir's Logger
 config :logger, :console,
