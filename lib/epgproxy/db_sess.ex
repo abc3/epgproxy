@@ -24,11 +24,14 @@ defmodule Epgproxy.DbSess do
 
   @impl true
   def init(_) do
-    {:ok, host} = Application.get_env(:epgproxy, :host)
+    {:ok, host} =
+      Application.get_env(:epgproxy, :db_host)
+      |> String.to_charlist()
+      |> :inet.parse_address()
 
     auth = %{
-      host: host |> String.to_charlist(),
-      port: Application.get_env(:epgproxy, :post),
+      host: host,
+      port: Application.get_env(:epgproxy, :port),
       user: Application.get_env(:epgproxy, :user),
       database: Application.get_env(:epgproxy, :database),
       application_name: "epgproxy"
