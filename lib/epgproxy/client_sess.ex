@@ -38,7 +38,8 @@ defmodule Epgproxy.ClientSess do
         trans: trans,
         connected: false,
         db_sess: nil,
-        pgo: nil
+        pgo: nil,
+        buffer: <<>>
       }
     )
   end
@@ -105,13 +106,17 @@ defmodule Epgproxy.ClientSess do
     :keep_state_and_data
   end
 
-  def handle_event(:info, {:tcp, _port, bin}, :idle, _) do
-    db_sess = :poolboy.checkout(:db_sess)
+  def handle_event(:info, {:tcp, _port, bin}, :idle, %{buffer: buf} = data) do
+    # TODO: also need return bin of decoded
+    {:ok, pkts, rest} = Epgproxy.Proto.Client.decode(buf <> bin)
 
-    dec = Epgproxy.Proto.Client.decode(bin)
-    Logger.debug(inspect(dec, pretty: true))
-    Epgproxy.DbSess.call(db_sess, bin)
-    :keep_state_and_data
+    Logger.debug("info #{inspect(pkts, pretty: true)}")
+
+    if length(pkts) > 0 do
+      :poolboy.checkout(:db_sess) |> Epgproxy.DbSess.call(buf <> bin)
+    end
+
+    {:keep_state, %{data | buffer: rest}}
   end
 
   def handle_event({:call, from}, {:client_call, bin}, _, %{socket: socket, trans: trans}) do
@@ -166,6 +171,15 @@ defmodule Epgproxy.ClientSess do
       :database => "postgres",
       :user => "postgres"
     })
+  end
+
+  def send_active_once(trans, socket, msg) do
+    trans.send(socket, msg)
+    :inet.setopts(socket, [{:active, :once}])
+  end
+
+  def active_once(socket) do
+    :inet.setopts(socket, [{:active, :once}])
   end
 
   def authentication_ok() do

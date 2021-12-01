@@ -21,7 +21,11 @@ defmodule Epgproxy.Proto.Server do
   end
 
   def packet(tag, pkt_len, payload) do
-    %Pkt{tag: tag, len: pkt_len + 1, payload: payload}
+    %Pkt{
+      tag: tag,
+      len: pkt_len + 1,
+      payload: decode_payload(tag, payload)
+    }
   end
 
   def decode_pkt(<<char::integer-8, pkt_len::integer-32, rest::binary>>, decode_payload \\ true) do
@@ -129,6 +133,11 @@ defmodule Epgproxy.Proto.Server do
 
   def decode_payload(:row_description, <<count::integer-16, rest::binary>>) do
     decode_row_description(count, rest, [])
+  end
+
+  def decode_payload(:data_row, payload) do
+    # String.split(payload, <<0>>)
+    nil
   end
 
   def decode_payload(:error_response, _payload) do

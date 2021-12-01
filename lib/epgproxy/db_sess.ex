@@ -31,9 +31,9 @@ defmodule Epgproxy.DbSess do
 
     auth = %{
       host: host,
-      port: Application.get_env(:epgproxy, :port),
-      user: Application.get_env(:epgproxy, :user),
-      database: Application.get_env(:epgproxy, :database),
+      port: Application.get_env(:epgproxy, :db_port),
+      user: Application.get_env(:epgproxy, :db_user),
+      database: Application.get_env(:epgproxy, :db_name),
       application_name: "epgproxy"
     }
 

@@ -7,33 +7,49 @@ defmodule Epgproxy.Proto.Client do
     do: defstruct([:tag, :len, :payload])
   )
 
+  def header(<<char::integer-8, pkt_len::integer-32>>) do
+    {tag(char), pkt_len}
+  end
+
   def decode(data) do
     decode(data, [])
   end
 
   def decode(data, acc) when byte_size(data) >= @pkt_header_size do
-    {:ok, pkt, rest} = decode_pkt(data)
-    decode(rest, [pkt | acc])
+    case decode_pkt(data) do
+      {:ok, pkt, rest} -> decode(rest, [pkt | acc])
+      {:acc, nil, bin} -> {:ok, Enum.reverse(acc), bin}
+    end
   end
 
   def decode(_, acc) do
-    Enum.reverse(acc)
+    {:ok, Enum.reverse(acc), ""}
   end
 
-  def decode_pkt(<<char::integer-8, pkt_len::integer-32, rest::binary>>, decode_payload \\ true) do
+  def decode_pkt(
+        <<char::integer-8, pkt_len::integer-32, rest::binary>> = bin,
+        decode_payload \\ true
+      ) do
     tag = tag(char)
     payload_len = pkt_len - 4
 
-    <<bin_payload::binary-size(payload_len), rest2::binary>> = rest
+    IO.inspect({:q, byte_size(rest), payload_len, byte_size(rest) >= payload_len})
 
-    payload =
-      if decode_payload and byte_size(bin_payload) > 0 do
-        decode_payload(tag, bin_payload)
-      else
-        nil
-      end
+    if byte_size(rest) >= payload_len do
+      <<bin_payload::binary-size(payload_len), rest2::binary>> = rest
 
-    {:ok, %Pkt{tag: tag, len: pkt_len + 1, payload: payload}, rest2}
+      payload =
+        if decode_payload do
+          decode_payload(tag, bin_payload)
+        else
+          nil
+        end
+
+      # {:ok, %Pkt{tag: nil, len: -1, payload: nil}, ""}
+      {:ok, %Pkt{tag: tag, len: pkt_len + 1, payload: payload}, rest2}
+    else
+      {:acc, nil, bin}
+    end
   end
 
   def tag(char) do
@@ -101,6 +117,10 @@ defmodule Epgproxy.Proto.Client do
 
   def decode_payload(:execute_message, payload) do
     # IO.inspect({:execute_message, payload})
+    nil
+  end
+
+  def decode_payload(_tag, "") do
     nil
   end
 
