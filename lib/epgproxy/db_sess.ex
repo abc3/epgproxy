@@ -1,26 +1,15 @@
 defmodule Epgproxy.DbSess do
   require Logger
-  @behaviour :gen_statem
+  use GenServer
   alias Epgproxy.Proto.Server
 
-  def start_link(_) do
-    :gen_statem.start_link(__MODULE__, [], [])
-  end
-
-  def call(msg) do
-    :gen_statem.call(__MODULE__, {:db_call, msg})
+  def start_link(config) when is_list(config) do
+    GenServer.start_link(__MODULE__, config, name: __MODULE__)
   end
 
   def call(pid, msg) do
-    :gen_statem.call(pid, {:db_call, msg})
+    GenServer.call(pid, {:db_call, msg})
   end
-
-  def server_call(msg) do
-    :gen_statem.call(__MODULE__, {:db_call, msg})
-  end
-
-  @impl true
-  def callback_mode(), do: [:handle_event_function]
 
   @impl true
   def init(_) do
@@ -37,7 +26,7 @@ defmodule Epgproxy.DbSess do
       application_name: "epgproxy"
     }
 
-    data = %{
+    state = %{
       socket: nil,
       caller: nil,
       sent: false,
@@ -46,14 +35,15 @@ defmodule Epgproxy.DbSess do
       buffer: <<>>,
       db_state: nil,
       parameter_status: %{},
-      wait: false
+      wait: false,
+      stage: nil
     }
 
-    {:ok, :db_connect, data, [{:next_event, :internal, :ok}]}
+    {:ok, state, {:continue, :db_connect}}
   end
 
   @impl true
-  def handle_event(:internal, _, :db_connect, %{auth: auth} = data) do
+  def handle_continue(:db_connect, %{auth: auth} = state) do
     socket_opts = [:binary, {:packet, :raw}, {:active, true}]
 
     case :gen_tcp.connect(auth.host, auth.port, socket_opts) do
@@ -69,7 +59,7 @@ defmodule Epgproxy.DbSess do
           ])
 
         :ok = :gen_tcp.send(socket, msg)
-        {:next_state, :authentication, %{data | socket: socket}}
+        {:noreply, %{state | stage: :authentication, socket: socket}}
 
       other ->
         Logger.error("Connection faild #{inspect(other)}")
@@ -78,13 +68,15 @@ defmodule Epgproxy.DbSess do
   end
 
   # receive call from the client
-  def handle_event({:call, {pid, _ref} = from}, {:db_call, bin}, _, %{socket: socket} = data) do
-    Logger.debug("<-- <-- bin #{inspect(byte_size(bin))} bytes")
+  @impl true
+  def handle_call({:db_call, bin}, {pid, _ref} = _from, %{socket: socket} = state) do
+    Logger.debug("<-- <-- bin #{inspect(byte_size(bin))} bytes, caller: #{inspect(pid)}")
     :gen_tcp.send(socket, bin)
-    {:keep_state, %{data | caller: pid}, [{:reply, from, :ok}]}
+    {:reply, :ok, %{state | caller: pid}}
   end
 
-  def handle_event(:info, {:tcp, _port, bin}, :authentication, data) do
+  @impl true
+  def handle_info({:tcp, _port, bin}, %{stage: :authentication} = state) do
     dec_pkt = Server.decode(bin)
 
     {ps, db_state} =
@@ -101,51 +93,41 @@ defmodule Epgproxy.DbSess do
 
     Logger.debug("parameter_status: #{inspect(ps, pretty: true)}")
     Logger.debug("DB ready_for_query: #{inspect(db_state)}")
-    {:next_state, :idle, %{data | parameter_status: ps}}
+    {:noreply, %{state | parameter_status: ps, stage: :idle}}
   end
 
   # receive reply from DB and send to the client
-  def handle_event(
-        :info,
-        {:tcp, _port, bin},
-        :idle,
-        %{
-          caller: caller,
-          buffer: buf
-        } = data
-      ) do
+  def handle_info({:tcp, _port, bin}, %{caller: caller, buffer: buf} = state) do
     Logger.debug("--> bin #{inspect(byte_size(bin))} bytes")
 
     Epgproxy.ClientSess.client_call(caller, bin)
 
     case handle_packets(buf <> bin) do
       {:ok, :ready_for_query, _} ->
+        # Epgproxy.ClientSess.ready_for_query(caller)
         :poolboy.checkin(:db_sess, self())
-        {:keep_state, %{data | buffer: <<>>}}
+        {:noreply, %{state | buffer: <<>>}}
 
       {:ok, _, rest} ->
-        {:keep_state, %{data | buffer: rest}}
+        {:noreply, %{state | buffer: rest}}
     end
   end
 
-  def handle_event(:info, {:tcp_closed, _port}, _, _) do
+  def handle_info({:tcp_closed, _port}, state) do
     Logger.error("DB closed connection")
-    :keep_state_and_data
+    {:noreply, state}
   end
 
-  def handle_event(event_type, event_content, state, data) do
+  def handle_info(msg, state) do
     msg = [
-      {"event_type", event_type},
-      {"event_content", event_content},
-      {"state", state},
-      {"data", data}
+      {"msg", msg},
+      {"state", state}
     ]
 
     Logger.error("Undefined msg: #{inspect(msg, pretty: true)}")
-    :keep_state_and_data
+    {:noreply, state}
   end
 
-  @impl true
   def terminate(_reason, _state, _data) do
     Logger.debug("DB terminated")
     :ok

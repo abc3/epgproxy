@@ -4,8 +4,32 @@ defmodule Epgproxy.Proto.Client do
   @pkt_header_size 5
 
   defmodule(Pkt,
-    do: defstruct([:tag, :len, :payload])
+    do: defstruct([:tag, :len, :payload, :bin])
   )
+
+  def stream(bin) do
+    Stream.resource(
+      fn -> {:bin, bin} end,
+      fn
+        <<>> ->
+          {:halt, nil}
+
+        {:bin, data} ->
+          if byte_size(data) >= @pkt_header_size do
+            case decode_pkt(data) do
+              {:ok, pkt, rest} ->
+                {[pkt], {:bin, rest}}
+
+              {:acc, nil, rest} ->
+                {[{:rest, rest}], <<>>}
+            end
+          else
+            {[{:rest, data}], <<>>}
+          end
+      end,
+      fn _ -> :ok end
+    )
+  end
 
   def header(<<char::integer-8, pkt_len::integer-32>>) do
     {tag(char), pkt_len}
@@ -33,8 +57,6 @@ defmodule Epgproxy.Proto.Client do
     tag = tag(char)
     payload_len = pkt_len - 4
 
-    IO.inspect({:q, byte_size(rest), payload_len, byte_size(rest) >= payload_len})
-
     if byte_size(rest) >= payload_len do
       <<bin_payload::binary-size(payload_len), rest2::binary>> = rest
 
@@ -45,8 +67,13 @@ defmodule Epgproxy.Proto.Client do
           nil
         end
 
-      # {:ok, %Pkt{tag: nil, len: -1, payload: nil}, ""}
-      {:ok, %Pkt{tag: tag, len: pkt_len + 1, payload: payload}, rest2}
+      {:ok,
+       %Pkt{
+         tag: tag,
+         len: pkt_len + 1,
+         payload: payload,
+         bin: <<char, pkt_len::integer-32, bin_payload::binary>>
+       }, rest2}
     else
       {:acc, nil, bin}
     end
@@ -141,5 +168,10 @@ defmodule Epgproxy.Proto.Client do
 
   def decode_startup_packet(_) do
     :undef
+  end
+
+  def parse_msg_sel_1() do
+    <<80, 0, 0, 0, 16, 0, 115, 101, 108, 101, 99, 116, 32, 49, 0, 0, 0, 66, 0, 0, 0, 12, 0, 0, 0,
+      0, 0, 0, 0, 0, 68, 0, 0, 0, 6, 80, 0, 69, 0, 0, 0, 9, 0, 0, 0, 0, 200, 83, 0, 0, 0, 4>>
   end
 end
