@@ -4,7 +4,7 @@ defmodule Epgproxy.DbSess do
   alias Epgproxy.Proto.Server
 
   def start_link(config) when is_list(config) do
-    GenServer.start_link(__MODULE__, config, name: __MODULE__)
+    GenServer.start_link(__MODULE__, config)
   end
 
   def call(pid, msg) do
@@ -78,6 +78,7 @@ defmodule Epgproxy.DbSess do
   @impl true
   def handle_info({:tcp, _port, bin}, %{stage: :authentication} = state) do
     dec_pkt = Server.decode(bin)
+    Logger.debug("dec_pkt, #{inspect(dec_pkt, pretty: true)}")
 
     {ps, db_state} =
       Enum.reduce(dec_pkt, {%{}, nil}, fn
@@ -100,15 +101,15 @@ defmodule Epgproxy.DbSess do
   def handle_info({:tcp, _port, bin}, %{caller: caller, buffer: buf} = state) do
     Logger.debug("--> bin #{inspect(byte_size(bin))} bytes")
 
-    Epgproxy.ClientSess.client_call(caller, bin)
-
     case handle_packets(buf <> bin) do
-      {:ok, :ready_for_query, _} ->
-        # Epgproxy.ClientSess.ready_for_query(caller)
-        :poolboy.checkin(:db_sess, self())
-        {:noreply, %{state | buffer: <<>>}}
+      {:ok, :ready_for_query, rest, :idle} ->
+        # Epgproxy.ClientSess.ready_for_query(caller, self())
+        Epgproxy.ClientSess.client_call(caller, {bin, :idle})
+        # :poolboy.checkin(:db_sess, self())
+        {:noreply, %{state | buffer: rest}}
 
-      {:ok, _, rest} ->
+      {:ok, _, rest, _} ->
+        Epgproxy.ClientSess.client_call(caller, {bin, :busy})
         {:noreply, %{state | buffer: rest}}
     end
   end
@@ -139,22 +140,24 @@ defmodule Epgproxy.DbSess do
 
     case rest do
       <<payload::binary-size(payload_len)>> ->
-        Logger.debug(inspect(Server.packet(tag, pkt_len, payload), pretty: true))
+        pkt = Server.packet(tag, pkt_len, payload)
+        Logger.debug(inspect(pkt, pretty: true))
 
-        {:ok, tag, ""}
+        {:ok, tag, "", pkt.payload}
 
       <<payload::binary-size(payload_len), rest1::binary>> ->
-        Logger.debug(inspect(Server.packet(tag, pkt_len, payload), pretty: true))
+        pkt = Server.packet(tag, pkt_len, payload)
+        Logger.debug(inspect(pkt, pretty: true))
 
         handle_packets(rest1)
 
       _ ->
-        {:ok, tag, bin}
+        {:ok, tag, bin, ""}
     end
   end
 
   def handle_packets(bin) do
-    {:ok, :small_chunk, bin}
+    {:ok, :small_chunk, bin, ""}
   end
 
   def send_active_once(socket, msg) do

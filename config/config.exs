@@ -7,7 +7,7 @@ config :epgproxy,
   db_name: "postgres",
   db_user: "postgres",
   db_password: "postgres",
-  pool_size: 1
+  pool_size: 10
 
 # Configures Elixir's Logger
 config :logger, :console,

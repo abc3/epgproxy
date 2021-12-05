@@ -1,6 +1,6 @@
 defmodule Epgproxy.ClientSess do
   require Logger
-  @behaviour :gen_statem
+  use GenServer
   @behaviour :ranch_protocol
 
   alias Epgproxy.Proto.Client
@@ -12,15 +12,12 @@ defmodule Epgproxy.ClientSess do
   end
 
   def client_call(pid, msg) do
-    :gen_statem.call(pid, {:client_call, msg})
+    GenServer.call(pid, {:client_call, msg})
   end
 
-  def ready_for_query(pid) do
-    :gen_statem.cast(pid, :ready_for_query)
+  def ready_for_query(pid, db_pid) do
+    GenServer.cast(pid, {:ready_for_query, db_pid})
   end
-
-  @impl true
-  def callback_mode(), do: [:handle_event_function]
 
   @impl true
   def init(_opts) do
@@ -32,11 +29,11 @@ defmodule Epgproxy.ClientSess do
     :ok = trans.setopts(socket, [{:active, true}])
     Logger.info("Epgproxy.ClientSess is: #{inspect(self())}")
 
-    :gen_statem.enter_loop(
+    :gen_server.enter_loop(
       __MODULE__,
       [],
       # :idle,
-      :wait_startup_packet,
+      # :wait_startup_packet,
       %{
         socket: socket,
         trans: trans,
@@ -44,82 +41,53 @@ defmodule Epgproxy.ClientSess do
         db_sess: nil,
         pgo: nil,
         buffer: <<>>,
-        db_pid: nil
+        db_pid: nil,
+        stage: :wait_startup_packet
       }
     )
   end
 
   @impl true
-  def handle_event(
-        :info,
+  def handle_info(
         {:tcp, _port, bin},
-        :wait_startup_packet,
-        %{trans: trans, socket: socket} = data
+        %{trans: trans, socket: socket, stage: :wait_startup_packet} = state
       ) do
     Logger.debug("Startup <-- bin #{inspect(byte_size(bin))}")
 
     # SSL negotiation, S/N/Error
     if byte_size(bin) == 8 do
       trans.send(socket, "N")
-      :keep_state_and_data
+      {:noreply, state}
     else
       hello = Client.decode_startup_packet(bin)
       Logger.debug("Client startup message: #{inspect(hello)}")
       trans.send(socket, authentication_ok())
-      {:next_state, :idle, data}
+      {:noreply, %{state | stage: :idle}}
+      # {:next_state, :idle, data}
     end
   end
 
-  # def handle_event(
-  #       {:call, from},
-  #       {:client_call, bin},
-  #       :wait_startup_packet,
-  #       %{
-  #         socket: socket,
-  #         trans: trans
-  #       } = data
-  #     ) do
-  #   Logger.debug("Startup --> --> bin #{inspect(byte_size(bin))} bytes")
-  #   trans.send(socket, bin)
-  #   {:next_state, :idle, data, [{:reply, from, :ok}]}
-  # end
+  def handle_info({:tcp, _port, <<88, 0, 0, 0, 4>>}, state) do
+    Logger.debug("Exclude termination")
+    {:noreply, state}
+  end
 
-  # # sync message
-  # def handle_event(:info, {:tcp, _port, <<83, 0, 0, 0, 4>>}, :idle, %{
-  #       trans: trans,
-  #       socket: socket
-  #     }) do
-  #   # ready_for_query and idle
-  #   trans.send(socket, <<?Z, 0, 0, 0, 5, ?I>>)
-  #   :keep_state_and_data
-  # end
+  def handle_info({:tcp, _port, bin1}, %{buffer: buf, db_pid: db_pid1} = state) do
+    db_worker =
+      if db_pid1 do
+        db_pid1
+      else
+        :poolboy.checkout(:db_sess)
+      end
 
-  # # exclude termination message
-  # def handle_event(:info, {:tcp, _port, <<?X, _::binary>> = bin}, :idle, _) do
-  #   dec = Epgproxy.Proto.Client.decode(bin)
-  #   Logger.debug(inspect(dec, pretty: true))
-  #   :keep_state_and_data
-  # end
-
-  # # simple protocol
-  # def handle_event(:info, {:tcp, _port, <<?Q, _::binary>> = bin}, :idle, _) do
-  #   db_sess = :poolboy.checkout(:db_sess)
-
-  #   dec = Epgproxy.Proto.Client.decode(bin)
-  #   Logger.debug(inspect(dec, pretty: true))
-  #   Epgproxy.DbSess.call(db_sess, bin)
-  #   :keep_state_and_data
-  # end4d
-
-  def handle_event(:info, {:tcp, _port, bin1}, :idle, %{buffer: buf, db_pid: _db_pid} = data) do
-    db_pid1 = nil
-    db_pid = :poolboy.checkout(:db_sess)
+    Logger.debug("Worker: #{inspect(db_worker)}")
+    # :poolboy.checkout(:db_sess)
     # # Epgproxy.DbSess.call(db_pid, bin)
 
     {rest, db_pid1, _transaction} =
       Client.stream(buf <> bin1)
       |> Enum.reduce(
-        {<<>>, db_pid, nil},
+        {<<>>, db_worker, nil},
         fn
           {:rest, rest}, {_, db_pid, transaction} ->
             {rest, db_pid, transaction}
@@ -135,46 +103,85 @@ defmodule Epgproxy.ClientSess do
         end
       )
 
-    # {:ok, pkts, rest} = Epgproxy.Proto.Client.decode(buf <> bin)
+    Logger.debug("rest #{inspect(rest, pretty: true)}")
+
+    {:noreply, %{state | buffer: rest, db_pid: db_worker}}
+  end
+
+  def handle_info({:tcp, _port, bin1}, %{buffer: buf, db_pid: db_pid1} = state) do
+    db_worker =
+      if db_pid1 do
+        db_pid1
+      else
+        :poolboy.checkout(:db_sess)
+      end
+
+    Logger.debug("Worker: #{inspect(db_worker)}")
+
+    {rest, db_pid1, _transaction} =
+      Client.stream(buf <> bin1)
+      |> Enum.reduce(
+        {<<>>, db_worker, nil},
+        fn
+          {:rest, rest}, {_, db_pid, transaction} ->
+            {rest, db_pid, transaction}
+
+          # %{bin: bin} = e, {_, nil, _} ->
+          #   # db_pid = :poolboy.checkout(:db_sess)
+          #   Epgproxy.DbSess.call(db_pid, bin)
+          #   {<<>>, db_pid, true}
+
+          %{bin: bin} = d, {_, db_pid, _} = acc ->
+            IO.inspect({:d, d})
+            Epgproxy.DbSess.call(db_pid, bin)
+            acc
+        end
+      )
 
     Logger.debug("rest #{inspect(rest, pretty: true)}")
-    # Logger.debug("info #{inspect(pkts, pretty: true)}")
 
-    # if length(pkts) > 0 do
-    #   :poolboy.checkout(:db_sess) |> Epgproxy.DbSess.call(buf <> bin)
-    # end
-
-    {:keep_state, %{data | buffer: rest, db_pid: db_pid1}}
+    {:noreply, %{state | buffer: rest, db_pid: db_worker}}
   end
 
-  def handle_event(:cast, :ready_for_query, _, %{db_pid: db_pid} = data) do
-    IO.inspect({-1, :checkin})
-    :poolboy.checkin(:db_sess, db_pid)
-    {:keep_state, %{data | db_pid: nil}}
-  end
-
-  def handle_event({:call, from}, {:client_call, bin}, _, %{socket: socket, trans: trans}) do
-    Logger.debug("--> --> bin #{inspect(byte_size(bin))} bytes")
-    trans.send(socket, bin)
-    {:keep_state_and_data, [{:reply, from, :ok}]}
-  end
-
-  def handle_event(:info, {:tcp_closed, _port}, _, _) do
+  def handle_info({:tcp_closed, _port}, state) do
     Logger.info("Client closed connection")
-    {:stop, :normal}
+    {:stop, :normal, state}
   end
 
-  def handle_event(event_type, event_content, state, data) do
+  def handle_info(msg, state) do
     msg = [
-      {"event_type", event_type},
-      {"event_content", event_content},
-      {"state", state},
-      {"data", data}
+      {"msg", msg},
+      {"state", state}
     ]
 
     Logger.error("Undefined msg: #{inspect(msg, pretty: true)}")
 
-    :keep_state_and_data
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_call(
+        {:client_call, {bin, ready}},
+        {_pid, _ref} = _from,
+        %{socket: socket, trans: trans, db_pid: db_sess} = state
+      ) do
+    db_sess1 =
+      if ready == :idle do
+        :poolboy.checkin(:db_sess, db_sess)
+        nil
+      else
+        db_sess
+      end
+
+    Logger.debug("--> --> bin #{inspect(byte_size(bin))} bytes")
+    trans.send(socket, bin)
+    {:reply, :ok, %{state | db_pid: db_sess1}}
+  end
+
+  def handle_cast({:ready_for_query, db_pid}, state) do
+    Logger.debug("Set db_pid to nil")
+    :poolboy.checkin(:db_sess, db_pid)
+    {:noreply, %{state | db_pid: nil}}
   end
 
   def test_conn() do
@@ -229,10 +236,9 @@ defmodule Epgproxy.ClientSess do
       <<83, 0, 0, 0, 25>>,
       <<99, 108, 105, 101, 110, 116, 95, 101, 110, 99, 111, 100, 105, 110, 103, 0, 85, 84, 70, 56,
         0>>,
-      # parameter_status,<<"server_version">>,<<"13.3">>
+      # parameter_status,<<"server_version">>,<<"14.1">>
       <<83, 0, 0, 0, 24>>,
-      <<115, 101, 114, 118, 101, 114, 95, 118, 101, 114, 115, 105, 111, 110, 0, 49, 51, 46, 51,
-        0>>,
+      <<115, 101, 114, 118, 101, 114, 95, 118, 101, 114, 115, 105, 111, 110, 0, "14.1", 0>>,
       # parameter_status,<<"session_authorization">>,<<"postgres">>
       <<83, 0, 0, 0, 35>>,
       <<115, 101, 115, 115, 105, 111, 110, 95, 97, 117, 116, 104, 111, 114, 105, 122, 97, 116,
