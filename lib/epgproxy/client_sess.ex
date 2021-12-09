@@ -79,12 +79,13 @@ defmodule Epgproxy.ClientSess do
       |> Enum.reduce(
         {<<>>, db_pid1, nil},
         fn
-          %{bin: bin}, {_, db_pid, _} = acc ->
-            Epgproxy.DbSess.call(db_pid, bin)
-            acc
-
           {:rest, rest}, {_, db_pid, transaction} ->
             {rest, db_pid, transaction}
+
+          pkt, {_, db_pid, _} = acc ->
+            Logger.debug(inspect(%{pkt | bin: ""}, pretty: true))
+            Epgproxy.DbSess.call(db_pid, pkt.bin)
+            acc
         end
       )
 

@@ -120,8 +120,8 @@ defmodule Epgproxy.Proto.Client do
 
   def decode_payload(:parse_message, payload) do
     case String.split(payload, <<0>>) do
-      q when is_list(q) -> q
-      _ -> :undefined
+      [""] -> :undefined
+      other -> other
     end
   end
 
