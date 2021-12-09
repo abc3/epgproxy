@@ -133,17 +133,15 @@ defmodule Epgproxy.Proto.Client do
     nil
   end
 
-  def decode_payload(:termination_message, payload) do
+  def decode_payload(:termination_message, _payload) do
     nil
   end
 
-  def decode_payload(:bind_message, payload) do
-    # IO.inspect({:bind, payload})
+  def decode_payload(:bind_message, _payload) do
     nil
   end
 
-  def decode_payload(:execute_message, payload) do
-    # IO.inspect({:execute_message, payload})
+  def decode_payload(:execute_message, _payload) do
     nil
   end
 

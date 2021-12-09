@@ -7,6 +7,7 @@ config :epgproxy,
   db_name: "postgres",
   db_user: "postgres",
   db_password: "postgres",
+  connect_timeout: 5000,
   application_name: "epgproxy",
   pool_size: 10
 

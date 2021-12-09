@@ -28,8 +28,6 @@ defmodule Epgproxy.ClientSess do
     :gen_server.enter_loop(
       __MODULE__,
       [],
-      # :idle,
-      # :wait_startup_packet,
       %{
         socket: socket,
         trans: trans,
@@ -58,11 +56,10 @@ defmodule Epgproxy.ClientSess do
       Logger.debug("Client startup message: #{inspect(hello)}")
       trans.send(socket, authentication_ok())
       {:noreply, %{state | stage: :idle}}
-      # {:next_state, :idle, data}
     end
   end
 
-  def handle_info({:tcp, _port, <<88, 0, 0, 0, 4>>}, state) do
+  def handle_info({:tcp, _port, <<"X", 0, 0, 0, 4>>}, state) do
     Logger.debug("Exclude termination")
     {:noreply, state}
   end
@@ -82,12 +79,12 @@ defmodule Epgproxy.ClientSess do
       |> Enum.reduce(
         {<<>>, db_pid1, nil},
         fn
-          {:rest, rest}, {_, db_pid, transaction} ->
-            {rest, db_pid, transaction}
-
           %{bin: bin}, {_, db_pid, _} = acc ->
             Epgproxy.DbSess.call(db_pid, bin)
             acc
+
+          {:rest, rest}, {_, db_pid, transaction} ->
+            {rest, db_pid, transaction}
         end
       )
 
@@ -115,7 +112,7 @@ defmodule Epgproxy.ClientSess do
   @impl true
   def handle_call(
         {:client_call, bin, ready?},
-        {_pid, _ref} = _from,
+        _,
         %{socket: socket, trans: trans, db_pid: db_pid} = state
       ) do
     db_pid1 =

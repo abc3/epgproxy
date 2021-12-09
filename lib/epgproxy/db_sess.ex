@@ -3,6 +3,8 @@ defmodule Epgproxy.DbSess do
   use GenServer
   alias Epgproxy.Proto.Server
 
+  @connect_timeout Application.get_env(:epgproxy, :connect_timeout)
+
   def start_link(config) when is_list(config) do
     GenServer.start_link(__MODULE__, config)
   end
@@ -27,6 +29,7 @@ defmodule Epgproxy.DbSess do
     }
 
     state = %{
+      check_ref: make_ref(),
       socket: nil,
       caller: nil,
       sent: false,
@@ -39,11 +42,22 @@ defmodule Epgproxy.DbSess do
       stage: nil
     }
 
-    {:ok, state, {:continue, :db_connect}}
+    send(self(), :connect)
+    {:ok, state}
+  end
+
+  # receive call from the client
+  @impl true
+  def handle_call({:db_call, bin}, {pid, _ref} = _from, %{socket: socket} = state) do
+    Logger.debug("<-- <-- bin #{inspect(byte_size(bin))} bytes, caller: #{inspect(pid)}")
+    :gen_tcp.send(socket, bin)
+    {:reply, :ok, %{state | caller: pid}}
   end
 
   @impl true
-  def handle_continue(:db_connect, %{auth: auth} = state) do
+  def handle_info(:connect, %{auth: auth, check_ref: ref} = state) do
+    Logger.info("Try to connect to DB")
+    Process.cancel_timer(ref)
     socket_opts = [:binary, {:packet, :raw}, {:active, true}]
 
     case :gen_tcp.connect(auth.host, auth.port, socket_opts) do
@@ -63,19 +77,10 @@ defmodule Epgproxy.DbSess do
 
       other ->
         Logger.error("Connection faild #{inspect(other)}")
-        {:stop, :normal}
+        {:noreply, %{state | check_ref: reconnect()}}
     end
   end
 
-  # receive call from the client
-  @impl true
-  def handle_call({:db_call, bin}, {pid, _ref} = _from, %{socket: socket} = state) do
-    Logger.debug("<-- <-- bin #{inspect(byte_size(bin))} bytes, caller: #{inspect(pid)}")
-    :gen_tcp.send(socket, bin)
-    {:reply, :ok, %{state | caller: pid}}
-  end
-
-  @impl true
   def handle_info({:tcp, _port, bin}, %{stage: :authentication} = state) do
     dec_pkt = Server.decode(bin)
     Logger.debug("dec_pkt, #{inspect(dec_pkt, pretty: true)}")
@@ -115,7 +120,7 @@ defmodule Epgproxy.DbSess do
 
   def handle_info({:tcp_closed, _port}, state) do
     Logger.error("DB closed connection")
-    {:noreply, state}
+    {:noreply, %{state | check_ref: reconnect()}}
   end
 
   def handle_info(msg, state) do
@@ -157,6 +162,10 @@ defmodule Epgproxy.DbSess do
 
   def handle_packets(bin) do
     {:ok, :small_chunk, bin, ""}
+  end
+
+  def reconnect() do
+    Process.send_after(self(), :connect, @connect_timeout)
   end
 
   def send_active_once(socket, msg) do
