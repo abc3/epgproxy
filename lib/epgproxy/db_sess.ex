@@ -23,7 +23,7 @@ defmodule Epgproxy.DbSess do
       port: Application.get_env(:epgproxy, :db_port),
       user: Application.get_env(:epgproxy, :db_user),
       database: Application.get_env(:epgproxy, :db_name),
-      application_name: "epgproxy"
+      application_name: Application.get_env(:epgproxy, :application_name)
     }
 
     state = %{
@@ -103,13 +103,12 @@ defmodule Epgproxy.DbSess do
 
     case handle_packets(buf <> bin) do
       {:ok, :ready_for_query, rest, :idle} ->
-        # Epgproxy.ClientSess.ready_for_query(caller, self())
-        Epgproxy.ClientSess.client_call(caller, {bin, :idle})
+        Epgproxy.ClientSess.client_call(caller, bin, true)
         # :poolboy.checkin(:db_sess, self())
         {:noreply, %{state | buffer: rest}}
 
       {:ok, _, rest, _} ->
-        Epgproxy.ClientSess.client_call(caller, {bin, :busy})
+        Epgproxy.ClientSess.client_call(caller, bin, false)
         {:noreply, %{state | buffer: rest}}
     end
   end

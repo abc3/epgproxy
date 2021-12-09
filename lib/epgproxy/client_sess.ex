@@ -11,12 +11,8 @@ defmodule Epgproxy.ClientSess do
     {:ok, pid}
   end
 
-  def client_call(pid, msg) do
-    GenServer.call(pid, {:client_call, msg})
-  end
-
-  def ready_for_query(pid, db_pid) do
-    GenServer.cast(pid, {:ready_for_query, db_pid})
+  def client_call(pid, bin, ready?) do
+    GenServer.call(pid, {:client_call, bin, ready?})
   end
 
   @impl true
@@ -38,7 +34,6 @@ defmodule Epgproxy.ClientSess do
         socket: socket,
         trans: trans,
         connected: false,
-        db_sess: nil,
         pgo: nil,
         buffer: <<>>,
         db_pid: nil,
@@ -72,30 +67,23 @@ defmodule Epgproxy.ClientSess do
     {:noreply, state}
   end
 
-  def handle_info({:tcp, _port, bin1}, %{buffer: buf, db_pid: db_pid1} = state) do
-    db_worker =
-      if db_pid1 do
-        db_pid1
+  def handle_info({:tcp, _port, bin1}, %{buffer: buf, db_pid: db_pid} = state) do
+    db_pid1 =
+      if db_pid do
+        db_pid
       else
         :poolboy.checkout(:db_sess)
       end
 
-    Logger.debug("Worker: #{inspect(db_worker)}")
-    # :poolboy.checkout(:db_sess)
-    # # Epgproxy.DbSess.call(db_pid, bin)
+    Logger.debug("Worker: #{inspect(db_pid1)}")
 
-    {rest, db_pid1, _transaction} =
+    {rest, _, _transaction} =
       Client.stream(buf <> bin1)
       |> Enum.reduce(
-        {<<>>, db_worker, nil},
+        {<<>>, db_pid1, nil},
         fn
           {:rest, rest}, {_, db_pid, transaction} ->
             {rest, db_pid, transaction}
-
-          # %{bin: bin} = e, {_, nil, _} ->
-          #   # db_pid = :poolboy.checkout(:db_sess)
-          #   Epgproxy.DbSess.call(db_pid, bin)
-          #   {<<>>, db_pid, true}
 
           %{bin: bin}, {_, db_pid, _} = acc ->
             Epgproxy.DbSess.call(db_pid, bin)
@@ -105,42 +93,7 @@ defmodule Epgproxy.ClientSess do
 
     Logger.debug("rest #{inspect(rest, pretty: true)}")
 
-    {:noreply, %{state | buffer: rest, db_pid: db_worker}}
-  end
-
-  def handle_info({:tcp, _port, bin1}, %{buffer: buf, db_pid: db_pid1} = state) do
-    db_worker =
-      if db_pid1 do
-        db_pid1
-      else
-        :poolboy.checkout(:db_sess)
-      end
-
-    Logger.debug("Worker: #{inspect(db_worker)}")
-
-    {rest, db_pid1, _transaction} =
-      Client.stream(buf <> bin1)
-      |> Enum.reduce(
-        {<<>>, db_worker, nil},
-        fn
-          {:rest, rest}, {_, db_pid, transaction} ->
-            {rest, db_pid, transaction}
-
-          # %{bin: bin} = e, {_, nil, _} ->
-          #   # db_pid = :poolboy.checkout(:db_sess)
-          #   Epgproxy.DbSess.call(db_pid, bin)
-          #   {<<>>, db_pid, true}
-
-          %{bin: bin} = d, {_, db_pid, _} = acc ->
-            IO.inspect({:d, d})
-            Epgproxy.DbSess.call(db_pid, bin)
-            acc
-        end
-      )
-
-    Logger.debug("rest #{inspect(rest, pretty: true)}")
-
-    {:noreply, %{state | buffer: rest, db_pid: db_worker}}
+    {:noreply, %{state | buffer: rest, db_pid: db_pid1}}
   end
 
   def handle_info({:tcp_closed, _port}, state) do
@@ -161,27 +114,21 @@ defmodule Epgproxy.ClientSess do
 
   @impl true
   def handle_call(
-        {:client_call, {bin, ready}},
+        {:client_call, bin, ready?},
         {_pid, _ref} = _from,
-        %{socket: socket, trans: trans, db_pid: db_sess} = state
+        %{socket: socket, trans: trans, db_pid: db_pid} = state
       ) do
-    db_sess1 =
-      if ready == :idle do
-        :poolboy.checkin(:db_sess, db_sess)
+    db_pid1 =
+      if ready? do
+        :poolboy.checkin(:db_sess, db_pid)
         nil
       else
-        db_sess
+        db_pid
       end
 
     Logger.debug("--> --> bin #{inspect(byte_size(bin))} bytes")
     trans.send(socket, bin)
-    {:reply, :ok, %{state | db_pid: db_sess1}}
-  end
-
-  def handle_cast({:ready_for_query, db_pid}, state) do
-    Logger.debug("Set db_pid to nil")
-    :poolboy.checkin(:db_sess, db_pid)
-    {:noreply, %{state | db_pid: nil}}
+    {:reply, :ok, %{state | db_pid: db_pid1}}
   end
 
   def test_conn() do
