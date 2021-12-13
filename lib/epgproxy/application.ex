@@ -17,7 +17,10 @@ defmodule Epgproxy.Application do
       #   id: Epgproxy.DbSess,
       #   start: {Epgproxy.DbSess, :start_link, [nil]}
       # }
-      :poolboy.child_spec(:worker, poolboy_config())
+      :poolboy.child_spec(:worker, poolboy_config()),
+      EpgproxyWeb.Telemetry,
+      {Phoenix.PubSub, name: Epgproxy.PubSub},
+      EpgproxyWeb.Endpoint
     ]
 
     opts = [strategy: :one_for_one, name: Epgproxy.Supervisor]
@@ -31,5 +34,10 @@ defmodule Epgproxy.Application do
       size: Application.get_env(:epgproxy, :pool_size),
       max_overflow: 0
     ]
+  end
+
+  def config_change(changed, _new, removed) do
+    EpgproxyWeb.Endpoint.config_change(changed, removed)
+    :ok
   end
 end
