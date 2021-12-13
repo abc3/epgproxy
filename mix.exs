@@ -16,7 +16,7 @@ defmodule Epgproxy.MixProject do
   def application do
     [
       mod: {Epgproxy.Application, []},
-      extra_applications: [:logger, :runtime_tools, :ranch]
+      extra_applications: [:logger, :runtime_tools, :ranch, :prom_ex]
     ]
   end
 

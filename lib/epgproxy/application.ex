@@ -13,11 +13,8 @@ defmodule Epgproxy.Application do
     )
 
     children = [
-      # %{
-      #   id: Epgproxy.DbSess,
-      #   start: {Epgproxy.DbSess, :start_link, [nil]}
-      # }
       :poolboy.child_spec(:worker, poolboy_config()),
+      Epgproxy.PromEx,
       EpgproxyWeb.Telemetry,
       {Phoenix.PubSub, name: Epgproxy.PubSub},
       EpgproxyWeb.Endpoint
@@ -36,6 +33,7 @@ defmodule Epgproxy.Application do
     ]
   end
 
+  @impl true
   def config_change(changed, _new, removed) do
     EpgproxyWeb.Endpoint.config_change(changed, removed)
     :ok
