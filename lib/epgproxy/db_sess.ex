@@ -42,6 +42,7 @@ defmodule Epgproxy.DbSess do
       stage: nil
     }
 
+    Registry.register(Registry.EpgproxyStats, "db_sess_size", System.system_time(:second))
     send(self(), :connect)
     {:ok, state}
   end

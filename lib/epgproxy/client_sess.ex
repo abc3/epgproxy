@@ -8,6 +8,7 @@ defmodule Epgproxy.ClientSess do
   @impl true
   def start_link(ref, _socket, transport, opts) do
     pid = :proc_lib.spawn_link(__MODULE__, :init, [ref, transport, opts])
+    Registry.register(Registry.EpgproxyStats, "client_sess_size", System.system_time(:second))
     {:ok, pid}
   end
 

@@ -28,7 +28,7 @@ defmodule EpgproxyWeb.Endpoint do
     only: ~w(css fonts images js favicon.ico robots.txt)
   )
 
-  plug(PromEx.Plug, path: "/metrics", prom_ex_module: Multiplayer.PromEx)
+  plug(PromEx.Plug, path: "/metrics", prom_ex_module: Epgproxy.PromEx)
 
   # Code reloading can be explicitly enabled under the
   # :code_reloader configuration of your endpoint.

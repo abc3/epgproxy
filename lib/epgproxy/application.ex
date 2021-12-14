@@ -3,6 +3,8 @@ defmodule Epgproxy.Application do
 
   @impl true
   def start(_type, _args) do
+    {:ok, _} = Registry.start_link(keys: :duplicate, name: Registry.EpgproxyStats)
+
     :ranch.start_listener(
       :pg_proxy,
       :ranch_tcp,
