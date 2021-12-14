@@ -1,5 +1,5 @@
 dev:
-	MIX_ENV=dev ERL_AFLAGS="-kernel shell_history enabled" iex -S mix
+	MIX_ENV=dev ERL_AFLAGS="-kernel shell_history enabled" iex -S mix phx.server
 
 bench_simple:
 	pgbench -M simple -h localhost -p 5555 -U postgres -j 4 -c 1 postgres
