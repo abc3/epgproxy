@@ -15,16 +15,22 @@ defmodule Epgproxy.DbSess do
 
   @impl true
   def init(_) do
-    {:ok, host} =
+    # IP
+    # {:ok, host} =
+    #   Application.get_env(:epgproxy, :db_host)
+    #   |> String.to_charlist()
+    #   |> :inet.parse_address()
+
+    host =
       Application.get_env(:epgproxy, :db_host)
       |> String.to_charlist()
-      |> :inet.parse_address()
 
     auth = %{
       host: host,
       port: Application.get_env(:epgproxy, :db_port),
       user: Application.get_env(:epgproxy, :db_user),
       database: Application.get_env(:epgproxy, :db_name),
+      password: Application.get_env(:epgproxy, :db_password),
       application_name: Application.get_env(:epgproxy, :application_name)
     }
 
@@ -39,7 +45,9 @@ defmodule Epgproxy.DbSess do
       db_state: nil,
       parameter_status: %{},
       wait: false,
-      stage: nil
+      stage: nil,
+      nonce: nil,
+      server_proof: nil
     }
 
     Registry.register(Registry.EpgproxyStats, "db_sess_size", System.system_time(:second))
@@ -86,7 +94,7 @@ defmodule Epgproxy.DbSess do
     dec_pkt = Server.decode(bin)
     Logger.debug("dec_pkt, #{inspect(dec_pkt, pretty: true)}")
 
-    {ps, db_state} =
+    resp =
       Enum.reduce(dec_pkt, {%{}, nil}, fn
         %{tag: :parameter_status, payload: {k, v}}, {ps, db_state} ->
           {Map.put(ps, k, v), db_state}
@@ -94,28 +102,91 @@ defmodule Epgproxy.DbSess do
         %{tag: :ready_for_query, payload: db_state}, {ps, _} ->
           {ps, db_state}
 
+        %{payload: {:authentication_sasl_password, methods_b}}, {ps, _} ->
+          nonce =
+            case Server.decode_string(methods_b) do
+              {:ok, "SCRAM-SHA-256", _} ->
+                nonce = :pgo_scram.get_nonce(16)
+
+                client_first =
+                  state.auth.user
+                  |> :pgo_scram.get_client_first(nonce)
+
+                client_first_size = IO.iodata_length(client_first)
+
+                sasl_initial_response = [
+                  <<"SCRAM-SHA-256">>,
+                  0,
+                  <<client_first_size::32-integer>>,
+                  client_first
+                ]
+
+                bin = :pgo_protocol.encode_scram_response_message(sasl_initial_response)
+                :gen_tcp.send(state.socket, bin)
+                nonce
+
+              other ->
+                Logger.error("Undefined sasl method #{other}")
+                nil
+            end
+
+          {ps, :authentication_sasl, nonce}
+
+        %{payload: {:authentication_server_first_message, server_first}}, {ps, _} ->
+          nonce = state.nonce
+          server_first_parts = :pgo_scram.parse_server_first(server_first, nonce)
+
+          {client_final_message, server_proof} =
+            :pgo_scram.get_client_final(
+              server_first_parts,
+              nonce,
+              state.auth.user,
+              state.auth.password
+            )
+
+          bin = :pgo_protocol.encode_scram_response_message(client_final_message)
+          :gen_tcp.send(state.socket, bin)
+
+          {ps, :authentication_server_first_message, server_proof}
+
+        %{payload: {:authentication_server_final_message, _server_final}}, acc ->
+          acc
+
         _e, acc ->
           acc
       end)
 
-    Logger.debug("parameter_status: #{inspect(ps, pretty: true)}")
-    Logger.debug("DB ready_for_query: #{inspect(db_state)}")
-    {:noreply, %{state | parameter_status: ps, stage: :idle}}
+    case resp do
+      {_, :authentication_sasl, nonce} ->
+        {:noreply, %{state | nonce: nonce}}
+
+      {_, :authentication_server_first_message, server_proof} ->
+        {:noreply, %{state | server_proof: server_proof}}
+
+      {ps, db_state} ->
+        Logger.debug("parameter_status: #{inspect(ps, pretty: true)}")
+        Logger.debug("DB ready_for_query: #{inspect(db_state)}")
+        {:noreply, %{state | parameter_status: ps, stage: :idle}}
+    end
   end
 
   # receive reply from DB and send to the client
   def handle_info({:tcp, _port, bin}, %{caller: caller, buffer: buf} = state) do
     Logger.debug("--> bin #{inspect(byte_size(bin))} bytes")
 
-    case handle_packets(buf <> bin) do
-      {:ok, :ready_for_query, rest, :idle} ->
-        Epgproxy.ClientSess.client_call(caller, bin, true)
-        # :poolboy.checkin(:db_sess, self())
-        {:noreply, %{state | buffer: rest}}
+    if caller do
+      case handle_packets(buf <> bin) do
+        {:ok, :ready_for_query, rest, :idle} ->
+          Epgproxy.ClientSess.client_call(caller, bin, true)
+          # :poolboy.checkin(:db_sess, self())
+          {:noreply, %{state | buffer: rest}}
 
-      {:ok, _, rest, _} ->
-        Epgproxy.ClientSess.client_call(caller, bin, false)
-        {:noreply, %{state | buffer: rest}}
+        {:ok, _, rest, _} ->
+          Epgproxy.ClientSess.client_call(caller, bin, false)
+          {:noreply, %{state | buffer: rest}}
+      end
+    else
+      {:noreply, state}
     end
   end
 

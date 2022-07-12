@@ -99,8 +99,17 @@ defmodule Epgproxy.Proto.Server do
       <<9::integer-32>> ->
         :authentication_sspi
 
-      _ ->
-        :undefined
+      <<10::integer-32, methods_b::binary>> ->
+        {:authentication_sasl_password, methods_b}
+
+      <<11::integer-32, server_first::binary>> ->
+        {:authentication_server_first_message, server_first}
+
+      <<12::integer-32, server_final_msg::binary>> ->
+        {:authentication_server_final_message, server_final_msg}
+
+      other ->
+        {:undefined, other}
     end
   end
 
