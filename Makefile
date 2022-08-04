@@ -1,5 +1,5 @@
 dev:
-	MIX_ENV=dev ERL_AFLAGS="-kernel shell_history enabled" iex -S mix phx.server
+	MIX_ENV=dev PRIMARY_DB="DB_URL1" SECONDARY_DB="DB_URL2" ERL_AFLAGS="-kernel shell_history enabled" iex -S mix phx.server
 
 bench_simple:
 	pgbench -M simple -h localhost -p 5555 -U postgres -j 4 -c 1 postgres

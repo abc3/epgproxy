@@ -9,32 +9,34 @@ defmodule Epgproxy.DbSess do
     GenServer.start_link(__MODULE__, config)
   end
 
+  def status(pid) do
+    GenServer.call(pid, :status)
+  end
+
   def call(pid, msg) do
     GenServer.call(pid, {:db_call, msg})
   end
 
   @impl true
-  def init(_) do
+  def init(type: type, creds: creds) do
     # IP
     # {:ok, host} =
     #   Application.get_env(:epgproxy, :db_host)
     #   |> String.to_charlist()
     #   |> :inet.parse_address()
 
-    host =
-      Application.get_env(:epgproxy, :db_host)
-      |> String.to_charlist()
-
     auth = %{
-      host: host,
-      port: Application.get_env(:epgproxy, :db_port),
-      user: Application.get_env(:epgproxy, :db_user),
-      database: Application.get_env(:epgproxy, :db_name),
-      password: Application.get_env(:epgproxy, :db_password),
+      host: creds.host |> String.to_charlist(),
+      port: creds.port,
+      user: creds.user,
+      database: creds.name,
+      password: creds.password,
       application_name: Application.get_env(:epgproxy, :application_name)
     }
 
     state = %{
+      type: type,
+      status: nil,
       check_ref: make_ref(),
       socket: nil,
       caller: nil,
@@ -63,13 +65,17 @@ defmodule Epgproxy.DbSess do
     {:reply, :ok, %{state | caller: pid}}
   end
 
+  def handle_call(:status, _, state) do
+    {:reply, state.status, state}
+  end
+
   @impl true
   def handle_info(:connect, %{auth: auth, check_ref: ref} = state) do
     Logger.info("Try to connect to DB")
     Process.cancel_timer(ref)
     socket_opts = [:binary, {:packet, :raw}, {:active, true}]
 
-    case :gen_tcp.connect(auth.host, auth.port, socket_opts) do
+    case :gen_tcp.connect(auth.host, auth.port, socket_opts, 1000) do
       {:ok, socket} ->
         Logger.debug("auth #{inspect(auth, pretty: true)}")
 
@@ -82,7 +88,7 @@ defmodule Epgproxy.DbSess do
           ])
 
         :ok = :gen_tcp.send(socket, msg)
-        {:noreply, %{state | stage: :authentication, socket: socket}}
+        {:noreply, %{state | stage: :authentication, socket: socket, status: :up}}
 
       other ->
         Logger.error("Connection faild #{inspect(other)}")
@@ -178,7 +184,7 @@ defmodule Epgproxy.DbSess do
       case handle_packets(buf <> bin) do
         {:ok, :ready_for_query, rest, :idle} ->
           Epgproxy.ClientSess.client_call(caller, bin, true)
-          # :poolboy.checkin(:db_sess, self())
+          :poolboy.checkin(state.type, self())
           {:noreply, %{state | buffer: rest}}
 
         {:ok, _, rest, _} ->
@@ -191,8 +197,10 @@ defmodule Epgproxy.DbSess do
   end
 
   def handle_info({:tcp_closed, _port}, state) do
-    Logger.error("DB closed connection")
-    {:noreply, %{state | check_ref: reconnect()}}
+    Logger.error("DB closed connection #{state.type}")
+    # :poolboy.checkout(state.type)
+    :poolboy.checkin(state.type, self())
+    {:noreply, %{state | check_ref: reconnect(), status: :down}}
   end
 
   def handle_info(msg, state) do

@@ -66,11 +66,19 @@ defmodule Epgproxy.ClientSess do
   end
 
   def handle_info({:tcp, _port, bin1}, %{buffer: buf, db_pid: db_pid} = state) do
+    db_pid =
+      if !db_pid do
+        :poolboy.checkout(:primary)
+      else
+        db_pid
+      end
+
     db_pid1 =
-      if db_pid do
+      if Epgproxy.DbSess.status(db_pid) == :up do
         db_pid
       else
-        :poolboy.checkout(:db_sess)
+        :poolboy.checkin(:primary, db_pid)
+        :poolboy.checkout(:secondary)
       end
 
     Logger.debug("Worker: #{inspect(db_pid1)}")
@@ -119,7 +127,7 @@ defmodule Epgproxy.ClientSess do
       ) do
     db_pid1 =
       if ready? do
-        :poolboy.checkin(:db_sess, db_pid)
+        # :poolboy.checkin(:db_sess, db_pid)
         nil
       else
         db_pid
