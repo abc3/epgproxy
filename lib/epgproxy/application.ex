@@ -4,6 +4,7 @@ defmodule Epgproxy.Application do
   @impl true
   def start(_type, _args) do
     {:ok, _} = Registry.start_link(keys: :duplicate, name: Registry.EpgproxyStats)
+    :syn.add_node_to_scopes([:conn])
 
     :ranch.start_listener(
       :pg_proxy,
@@ -15,8 +16,8 @@ defmodule Epgproxy.Application do
     )
 
     children = [
-      :poolboy.child_spec(:worker, poolboy_config()),
-      Epgproxy.PromEx,
+      # :poolboy.child_spec(:worker, poolboy_config()),
+      # Epgproxy.PromEx,
       EpgproxyWeb.Telemetry,
       {Phoenix.PubSub, name: Epgproxy.PubSub},
       EpgproxyWeb.Endpoint

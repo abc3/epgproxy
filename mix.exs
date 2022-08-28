@@ -39,7 +39,9 @@ defmodule Epgproxy.MixProject do
       {:plug_cowboy, "~> 2.0"},
       {:prom_ex, "~> 1.4.1"},
       {:poolboy, "~> 1.5.2"},
-      {:pgo, "~> 0.12"}
+      {:pgo, "~> 0.12"},
+      {:db_connection, "~> 2.1"},
+      {:syn, "~> 3.3"}
       # {:postgrex, "~> 0.15"},
       # {:epgsql, "~> 4.5"}
     ]
