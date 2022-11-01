@@ -3,7 +3,7 @@ defmodule Epgproxy.ClientSess do
   use GenServer
   @behaviour :ranch_protocol
 
-  alias Epgproxy.Proto.Client
+  alias Epgproxy.{Proto.Client, Cache}
 
   @impl true
   def start_link(ref, _socket, transport, opts) do
@@ -84,8 +84,15 @@ defmodule Epgproxy.ClientSess do
             {rest, db_pid, transaction}
 
           pkt, {_, db_pid, _} = acc ->
+            if pkt.tag == :simple_query do
+              IO.inspect({"simple_query :: " <> pkt.payload})
+              GenServer.call(db_pid, {:db_call, pkt.bin, {:cache, pkt.payload}})
+            else
+              Epgproxy.DbSess.call(db_pid, pkt.bin)
+            end
+
             Logger.debug(inspect(%{pkt | bin: ""}, pretty: true))
-            Epgproxy.DbSess.call(db_pid, pkt.bin)
+            # Epgproxy.DbSess.call(db_pid, pkt.bin)
             acc
         end
       )

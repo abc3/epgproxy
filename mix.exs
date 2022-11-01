@@ -35,13 +35,11 @@ defmodule Epgproxy.MixProject do
       {:telemetry_metrics, "~> 0.4"},
       {:telemetry_poller, "~> 0.4"},
       {:gettext, "~> 0.11"},
-      {:jason, "~> 1.0"},
       {:plug_cowboy, "~> 2.0"},
       {:prom_ex, "~> 1.4.1"},
       {:poolboy, "~> 1.5.2"},
-      {:pgo, "~> 0.12"}
-      # {:postgrex, "~> 0.15"},
-      # {:epgsql, "~> 4.5"}
+      {:pgo, "~> 0.12"},
+      {:epg_query, "~> 0.1.0", git: "https://github.com/abc3/epg_query"}
     ]
   end
 end

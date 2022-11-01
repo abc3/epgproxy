@@ -2,6 +2,7 @@ defmodule Epgproxy.DbSess do
   require Logger
   use GenServer
   alias Epgproxy.Proto.Server
+  alias Epgproxy.Cache
 
   @connect_timeout Application.get_env(:epgproxy, :connect_timeout)
 
@@ -47,7 +48,9 @@ defmodule Epgproxy.DbSess do
       wait: false,
       stage: nil,
       nonce: nil,
-      server_proof: nil
+      server_proof: nil,
+      cache: "",
+      payload: nil
     }
 
     Registry.register(Registry.EpgproxyStats, "db_sess_size", System.system_time(:second))
@@ -61,6 +64,26 @@ defmodule Epgproxy.DbSess do
     Logger.debug("<-- <-- bin #{inspect(byte_size(bin))} bytes, caller: #{inspect(pid)}")
     :gen_tcp.send(socket, bin)
     {:reply, :ok, %{state | caller: pid}}
+  end
+
+  def handle_call(
+        {:db_call, bin, {:cache, payload}},
+        {pid, _ref} = _from,
+        %{socket: socket} = state
+      ) do
+    if !Epgproxy.Cache.cached?(payload) do
+      :gen_tcp.send(socket, bin)
+      {:reply, :ok, %{state | caller: pid, payload: payload}}
+    else
+      {:ok, bin} = Epgproxy.Cache.get(payload)
+
+      # TODO: rewrite
+      spawn(fn ->
+        Epgproxy.ClientSess.client_call(pid, bin, true)
+      end)
+
+      {:reply, :ok, %{state | caller: pid}}
+    end
   end
 
   @impl true
@@ -171,19 +194,21 @@ defmodule Epgproxy.DbSess do
   end
 
   # receive reply from DB and send to the client
-  def handle_info({:tcp, _port, bin}, %{caller: caller, buffer: buf} = state) do
+  def handle_info({:tcp, _port, bin}, %{caller: caller, buffer: buf, cache: cache} = state) do
     Logger.debug("--> bin #{inspect(byte_size(bin))} bytes")
+    cache2 = cache <> bin
 
     if caller do
       case handle_packets(buf <> bin) do
         {:ok, :ready_for_query, rest, :idle} ->
           Epgproxy.ClientSess.client_call(caller, bin, true)
+          Cache.handle_cache(state.payload, cache2)
           # :poolboy.checkin(:db_sess, self())
-          {:noreply, %{state | buffer: rest}}
+          {:noreply, %{state | buffer: "", cache: ""}}
 
         {:ok, _, rest, _} ->
           Epgproxy.ClientSess.client_call(caller, bin, false)
-          {:noreply, %{state | buffer: rest}}
+          {:noreply, %{state | buffer: rest, cache: cache2}}
       end
     else
       {:noreply, state}
