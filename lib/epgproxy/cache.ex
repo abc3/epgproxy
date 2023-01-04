@@ -54,6 +54,24 @@ defmodule Epgproxy.Cache do
     :erlang.phash2(record, 1000)
   end
 
+  def drop_for_table(table) do
+    Logger.debug("Dropping cache for table: " <> table)
+
+    fn
+      {id, _, _, tables}, acc ->
+        if is_list(tables) && Enum.member?(tables, table) do
+          :ets.delete(@cache_table, id)
+          acc
+        else
+          nil
+        end
+
+      _, _ ->
+        nil
+    end
+    |> :ets.foldl(nil, @cache_table)
+  end
+
   def put(record) do
     # TODO: use query's fingerprint as key
     tables = list_tables(record)

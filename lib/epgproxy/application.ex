@@ -21,7 +21,8 @@ defmodule Epgproxy.Application do
       Epgproxy.PromEx,
       EpgproxyWeb.Telemetry,
       {Phoenix.PubSub, name: Epgproxy.PubSub},
-      EpgproxyWeb.Endpoint
+      EpgproxyWeb.Endpoint,
+      Epgproxy.Replication
     ]
 
     opts = [strategy: :one_for_one, name: Epgproxy.Supervisor]
